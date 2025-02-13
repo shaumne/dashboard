@@ -1,0 +1,4 @@
+https://www.i-bidder.com/en-gb/auction-catalogues/search-filter?auctiontype=Timed&categorycode=ELP&countryname=United+Kingdom&Auctions=current
+https://www.i-bidder.com/en-gb/auction-catalogues/search-filter?auctions=current&auctiontype=Timed&countryname=United+Kingdom&categoryCode=IND
+https://www.i-bidder.com/en-gb/auction-catalogues/search-filter?auctions=current&auctiontype=Timed&countryname=United+Kingdom&categoryCode=COG
+https://www.i-bidder.com/en-gb/auction-catalogues/search-filter?auctions=current&auctiontype=Timed&countryname=United+Kingdom&categoryCode=OTI

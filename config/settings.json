@@ -1,0 +1,18 @@
+{
+    "items_per_page": 12,
+    "ebay_app_id": "Emrecane-testlist-PRD-1ded7d28c-c12c1a7d",
+    "ebay_cert_id": "PRD-ded7d28c51d1-ee8b-4524-b19d-7d5a",
+    "ebay_dev_id": "16e78c19-03b2-4fe1-be62-f61a04aea50e",
+    "ebay_auth_token": "v^1.1#i^1#f^0#r^1#I^3#p^3#t^Ul4xMF80OjczNTlBNTRCMDc1NDUxMDBBOEM4OTVFNEFFRUQ1NTlDXzFfMSNFXjI2MA==",
+    "notification_email": "",
+    "notification_whatsapp": "",
+    "shipping_small_weight": 15,
+    "shipping_medium_weight": 30,
+    "shipping_small_price": 0,
+    "shipping_medium_price": 20,
+    "shipping_large_price": 150,
+    "shipping_international_small": 100,
+    "shipping_international_medium": 250,
+    "shipping_international_large": 2500,
+    "ebay_oauth_token": "v^1.1#i^1#r^1#p^3#f^0#I^3#t^Ul4xMF8yOkE5N0E0NjQ1MzNCMEU4NEQ1QkY5QTIyREM4MEE1MzkwXzFfMSNFXjI2MA=="
+}

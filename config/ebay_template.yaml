@@ -1,0 +1,36 @@
+Item:
+  Country: GB
+  Currency: GBP
+  DispatchTimeMax: 3
+  ListingDuration: Days_7
+  ListingType: FixedPriceItem
+  PaymentMethods: 
+    - PayPal
+  PostalCode: SW1A 1AA
+  Quantity: 1
+  ReturnPolicy:
+    ReturnsAcceptedOption: ReturnsAccepted
+    RefundOption: MoneyBack
+    ReturnsWithinOption: Days_30
+    ShippingCostPaidByOption: Buyer
+  ShippingDetails:
+    ShippingType: Flat
+    ShippingServiceOptions:
+      - ShippingService: UK_RoyalMailSecondClass
+        ShippingServiceCost:
+          value: 3.99
+          currencyID: GBP
+        ShippingServicePriority: 1
+    InternationalShippingServiceOption:
+      - ShippingService: UK_RoyalMailInternationalSignedFor
+        ShippingServiceCost:
+          value: 9.99
+          currencyID: GBP
+        ShippingServicePriority: 1
+        ShipToLocation:
+          - Worldwide
+  Site: UK
+  ItemSpecifics:
+    NameValueList:
+      - Name: Condition
+        Value: Used 

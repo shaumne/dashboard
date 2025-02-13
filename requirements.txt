@@ -1,0 +1,26 @@
+# Web Scraping & Browser Automation
+playwright
+selenium
+beautifulsoup4
+requests
+
+# Data Processing
+pandas
+numpy
+
+# UI & Visualization
+streamlit
+plotly
+
+# Progress & Utils
+tqdm
+nest-asyncio
+
+# Date & Time
+python-dateutil
+
+# OpenAI (ChatGPT) Integration
+openai
+# Async Support
+asyncio
+aiohttp
