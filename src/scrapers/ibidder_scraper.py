@@ -421,7 +421,7 @@ class IBidderScraper:
             
             matching_urls = []
             
-            while current_page <= 2:
+            while current_page <= 107:
                 try:
                     # Check current page
                     page_url = url.replace(f"page={current_page-1}", f"page={current_page}") if "page=" in url else f"{url}&page={current_page}"
