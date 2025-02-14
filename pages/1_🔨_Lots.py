@@ -92,17 +92,36 @@ class Dashboard:
                 with st.spinner("Updating data... This may take a while..."):
                     try:
                         # Import scraper
-                        from src.scrapers.ibidder_scraper1 import run_scraper
+                        from src.scrapers.ibidder_scraper import run_scraper
+                        
+                        # Create progress bar
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
                         
                         # Run the scraper
+                        status_text.text("Step 1/2: Fetching product listings...")
+                        progress_bar.progress(25)
+                        
                         if run_scraper():
+                            progress_bar.progress(100)
+                            status_text.text("Completed! Refreshing page...")
                             st.success("✅ Data updated successfully!")
-                            st.rerun()  # Sayfayı yenile
+                            time.sleep(2)  # Give time to see success message
+                            st.rerun()  # Refresh the page
                         else:
+                            progress_bar.empty()
+                            status_text.empty()
                             st.error("❌ Error updating data")
                             
                     except Exception as e:
                         st.error(f"Error running scraper: {str(e)}")
+                    finally:
+                        # Clean up progress indicators
+                        try:
+                            progress_bar.empty()
+                            status_text.empty()
+                        except:
+                            pass
 
     def show_metrics(self):
         if st.session_state.lots_df is not None:
