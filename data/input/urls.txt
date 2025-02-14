@@ -1,1 +1,1 @@
-https://www.i-bidder.com/en-gb/auction-catalogues/search-filter?auctiontype=Timed&categorycode=ELP&countryname=United+Kingdom&Auctions=current
+https://www.i-bidder.com/en-gb/search-filter?countrycode=United+Kingdom&mastercategorycode=ELP&searchterm=&AuctionType=Timed

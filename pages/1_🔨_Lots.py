@@ -6,6 +6,39 @@ import sys
 import os
 import signal
 import nest_asyncio
+import time
+from datetime import datetime
+
+@st.cache_data(ttl=2)
+def load_lots_data():
+    """Load data from lots_details.csv"""
+    try:
+        if os.path.exists('data/output/lots_details.csv'):
+            lots_df = pd.read_csv('data/output/lots_details.csv')
+            
+            # Clean data
+            def clean_percentage(value):
+                if pd.isna(value):
+                    return 0.0
+                if isinstance(value, str):
+                    return float(value.replace('%', '').strip())
+                return float(value)
+            
+            lots_df['commission'] = lots_df['commission'].apply(clean_percentage)
+            lots_df['vat_rate'] = lots_df['vat_rate'].apply(clean_percentage)
+            
+            # Fill NaN values
+            lots_df['url'] = lots_df['url'].fillna('')
+            lots_df['current_bid'] = lots_df['current_bid'].fillna('No Bid')
+            lots_df['images'] = lots_df['images'].fillna('[]').apply(eval)
+            
+            return lots_df
+        else:
+            return None
+            
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        return None
 
 class Dashboard:
     def __init__(self):
@@ -14,13 +47,19 @@ class Dashboard:
             page_icon="🔨",
             layout="wide"
         )
+        
+        # Session state initialization
         if 'lots_df' not in st.session_state:
             st.session_state.lots_df = None
         if 'page_number' not in st.session_state:
             st.session_state.page_number = 1
         if 'process' not in st.session_state:
             st.session_state.process = None
+        if 'last_refresh' not in st.session_state:
+            st.session_state.last_refresh = time.time()
+            
         self.items_per_page = 12
+        self.refresh_interval = 2  # 2 saniye
 
     def clean_price(self, price):
         """Clean and convert price value"""
@@ -36,38 +75,6 @@ class Dashboard:
             return None
         except:
             return None
-
-    def load_data(self):
-        """Load data from lots_details.csv"""
-        try:
-            if os.path.exists('data/output/lots_details.csv'):
-                lots_df = pd.read_csv('data/output/lots_details.csv')
-                
-                # Clean data
-                def clean_percentage(value):
-                    if pd.isna(value):
-                        return 0.0
-                    if isinstance(value, str):
-                        return float(value.replace('%', '').strip())
-                    return float(value)
-                
-                lots_df['commission'] = lots_df['commission'].apply(clean_percentage)
-                lots_df['vat_rate'] = lots_df['vat_rate'].apply(clean_percentage)
-                
-                # Fill NaN values
-                lots_df['url'] = lots_df['url'].fillna('')
-                lots_df['current_bid'] = lots_df['current_bid'].fillna('No Bid')
-                lots_df['images'] = lots_df['images'].fillna('[]').apply(eval)  # String listesini gerçek listeye çevir
-                
-                st.success(f"Loaded {len(lots_df)} lots!")
-                st.session_state.lots_df = lots_df
-            else:
-                st.warning("No data file found. Please refresh data.")
-                
-        except Exception as e:
-            st.error(f"Error loading data: {str(e)}")
-            import traceback
-            st.error(traceback.format_exc())
 
     def update_ibidder_data(self):
         """Update i-bidder data section"""
@@ -85,7 +92,7 @@ class Dashboard:
                 with st.spinner("Updating data... This may take a while..."):
                     try:
                         # Import scraper
-                        from src.scrapers.ibidder_scraper import run_scraper
+                        from src.scrapers.ibidder_scraper1 import run_scraper
                         
                         # Run the scraper
                         if run_scraper():
@@ -228,16 +235,27 @@ class Dashboard:
     def run(self):
         st.title("🔨 i-bidder Lots Dashboard")
         
+        # Auto refresh control in sidebar
+        with st.sidebar:
+            auto_refresh = st.checkbox("Otomatik Yenileme", value=True)
+            st.caption(f"Son yenileme: {datetime.now().strftime('%H:%M:%S')}")
+        
         # Update data section
         self.update_ibidder_data()
         
         st.markdown("---")
         
-        # Initial data load
-        if st.session_state.lots_df is None:
-            self.load_data()
+        # Check if it's time to refresh
+        current_time = time.time()
+        if auto_refresh and (current_time - st.session_state.last_refresh) >= self.refresh_interval:
+            st.cache_data.clear()
+            st.session_state.last_refresh = current_time
         
-        if st.session_state.lots_df is not None:
+        # Load data - sınıf dışındaki fonksiyonu kullan
+        lots_df = load_lots_data()
+        if lots_df is not None:
+            st.session_state.lots_df = lots_df
+            
             # Main metrics
             self.show_metrics()
             
@@ -248,6 +266,11 @@ class Dashboard:
             filtered_df = self.apply_filters(st.session_state.lots_df.copy(), filters)
             
             self.show_lots_grid(filtered_df)
+            
+            # Auto refresh if enabled
+            if auto_refresh:
+                time.sleep(self.refresh_interval)
+                st.rerun()
 
 if __name__ == "__main__":
     dashboard = Dashboard()

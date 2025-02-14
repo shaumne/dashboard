@@ -1,49 +1,196 @@
 import csv
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait 
 from selenium.webdriver.support import expected_conditions as EC
 import time
 import logging
+from queue import Queue
+import threading
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class IBidderScraper:
     def __init__(self):
-        # Requests session için headers
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+        self.thread_local = threading.local()
+        self.max_workers = 1
 
-    def scrape_all(self):
-        """Ana iş akışı"""
+    def get_session(self):
+        """Her thread için ayrı bir session oluştur"""
+        if not hasattr(self.thread_local, "session"):
+            self.thread_local.session = requests.Session()
+            self.thread_local.session.headers.update(self.headers)
+        return self.thread_local.session
+
+    def get_driver(self):
+        """Her thread için ayrı bir Selenium driver oluştur"""
+        if not hasattr(self.thread_local, "driver"):
+            chrome_options = Options()
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--window-size=1920,1080')
+            chrome_options.add_argument('--headless')
+            self.thread_local.driver = webdriver.Chrome(options=chrome_options)
+            self.thread_local.driver.implicitly_wait(10)
+        return self.thread_local.driver
+
+    def process_page(self, page_number, base_url):
+        """Tek bir sayfayı işle"""
+        session = self.get_session()
+        page_url = f"{base_url}&page={page_number}" if "?" in base_url else f"{base_url}?page={page_number}"
+        
         try:
-            logger.info("Step 1: Creating products.csv...")
-            self.create_products_csv()
+            response = session.get(page_url)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            auction_links = soup.find_all('a', class_='click-track')
             
-            logger.info("\nStep 2: Creating lots_details.csv...")
-            self.create_lots_details()
+            urls = set()
+            for link in auction_links:
+                auction_url = link.get('href')
+                if auction_url:
+                    if not auction_url.startswith('http'):
+                        auction_url = f"https://www.i-bidder.com{auction_url}"
+                    urls.add(auction_url)
             
-            logger.info("All done!")
+            return list(urls)
+        except Exception as e:
+            logger.error(f"Sayfa işleme hatası {page_number}: {str(e)}")
+            return []
+
+    def process_product(self, url):
+        """Process a single product"""
+        session = self.get_session()
+        try:
+            logger.info(f"Processing product: {url}")
+            response = session.get(url)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            product_data = {
+                'title': 'Unknown',
+                'url': url,
+                'image_url': ''
+            }
+            
+            # Get title
+            title_elem = soup.find('h1')
+            if title_elem:
+                product_data['title'] = title_elem.text.strip()
+            
+            # Get image
+            img_elem = soup.find('img', {'class': 'lot-image'})
+            if img_elem:
+                product_data['image_url'] = img_elem.get('src', '')
+            
+            logger.debug(f"Product data collected: {product_data}")
+            return product_data
             
         except Exception as e:
-            logger.error(f"Error in scrape_all: {str(e)}")
+            logger.error(f"Error processing product {url}: {str(e)}")
+            # Hata durumunda bile URL'yi kaydet
+            return {
+                'title': 'Error',
+                'url': url,
+                'image_url': ''
+            }
+
+    def process_lot_details(self, url):
+        """Tek bir lot detayını işle"""
+        driver = self.get_driver()
+        try:
+            return self.get_lot_details(driver, {'url': url})
+        except Exception as e:
+            logger.error(f"Lot detay hatası {url}: {str(e)}")
+            return None
+
+    def create_products_csv(self):
+        """Create products.csv with single thread processing"""
+        try:
+            logger.info("Starting product collection process...")
+            
+            # URL'leri topla
+            all_auction_urls = []
+            urls = self.get_urls_from_file('data/input/urls.txt')
+            
+            for url in urls:
+                try:
+                    page_urls = self.get_auction_urls(url, '')
+                    all_auction_urls.extend(page_urls)
+                except Exception as e:
+                    logger.error(f"Error collecting URLs from {url}: {str(e)}")
+            
+            all_auction_urls = list(set(all_auction_urls))  # Tekrarları temizle
+            logger.info(f"Total unique URLs collected: {len(all_auction_urls)}")
+            
+            # Ürünleri işle
+            products = []
+            with tqdm(total=len(all_auction_urls), desc="Processing products") as pbar:
+                for url in all_auction_urls:
+                    try:
+                        product = self.process_product(url)
+                        if product:
+                            products.append(product)
+                        pbar.update(1)
+                        
+                        # Her 50 üründe bir log
+                        if len(products) % 50 == 0:
+                            logger.info(f"Processed {len(products)}/{len(all_auction_urls)} products")
+                            
+                        # Her 100 üründe bir kaydet
+                        if len(products) % 100 == 0:
+                            self.save_to_csv(products, 'data/output/products.csv')
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing URL {url}: {str(e)}")
+                        continue
+            
+            # Kalan ürünleri kaydet
+            if products:
+                self.save_to_csv(products, 'data/output/products.csv')
+            
+            logger.info(f"Successfully processed {len(products)} products")
+            
+        except Exception as e:
+            logger.error(f"Critical error in create_products_csv: {str(e)}")
             raise
 
+    def save_to_csv(self, products, filename):
+        """Save products to CSV file"""
+        try:
+            mode = 'w' if not os.path.exists(filename) else 'a'
+            with open(filename, mode, newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['title', 'url', 'image_url']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                if mode == 'w':  # Yeni dosya ise başlık yaz
+                    writer.writeheader()
+                
+                writer.writerows(products)
+                
+            logger.info(f"Saved {len(products)} products to {filename}")
+            
+        except Exception as e:
+            logger.error(f"Error saving to CSV: {str(e)}")
+
     def create_lots_details(self):
-        """Second step: Create lots_details.csv using Selenium"""
+        """Create lots_details.csv with batch saving"""
         try:
             chrome_options = Options()
-            chrome_options.add_argument('--headless')
             chrome_options.add_argument('--disable-gpu')
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
@@ -60,36 +207,82 @@ class IBidderScraper:
             driver.implicitly_wait(10)
             
             results = []
-            for product in tqdm(products, desc="Processing lots"):
+            batch_size = 20  # Her 20 üründe bir kaydet
+            fieldnames = [
+                'name', 'current_bid', 'opening_bid', 'estimate_bid',
+                'buy_it_now', 'end_time', 'description', 'images', 'url',
+                'commission', 'vat_rate', 'has_buy_it_now', 'has_estimate',
+                'has_current_bid', 'has_opening_bid'
+            ]
+            
+            # CSV dosyasını oluştur ve başlıkları yaz
+            with open('data/output/lots_details.csv', 'w', newline='', encoding='utf-8') as file:
+                writer = csv.DictWriter(file, fieldnames=fieldnames)
+                writer.writeheader()
+            
+            for index, product in enumerate(tqdm(products, desc="Processing lots")):
                 try:
                     result = self.get_lot_details(driver, product)
                     if result:
                         results.append(result)
-                    time.sleep(2)
+                    
+                    # Her 20 üründe bir veya son ürünse kaydet
+                    if (len(results) >= batch_size) or (index == len(products) - 1):
+                        logger.info(f"Saving batch of {len(results)} products to CSV...")
+                        with open('data/output/lots_details.csv', 'a', newline='', encoding='utf-8') as file:
+                            writer = csv.DictWriter(file, fieldnames=fieldnames)
+                            writer.writerows(results)
+                        
+                        # Kaydedilen ürünleri temizle
+                        results = []
+                        logger.info(f"Batch saved. Total progress: {index + 1}/{len(products)}")
+                    
+                    time.sleep(2)  # Rate limiting
+                    
                 except Exception as e:
-                    logger.error(f"Error processing lot: {str(e)}")
+                    logger.error(f"Error processing lot {index + 1}: {str(e)}")
                     continue
             
             driver.quit()
-            
-            if results:
-                fieldnames = [
-                    'name', 'current_bid', 'opening_bid', 'estimate_bid',
-                    'buy_it_now', 'end_time', 'description', 'images', 'url',
-                    'commission', 'vat_rate', 'has_buy_it_now', 'has_estimate',
-                    'has_current_bid', 'has_opening_bid'
-                ]
-                
-                with open('data/output/lots_details.csv', 'w', newline='', encoding='utf-8') as file:
-                    writer = csv.DictWriter(file, fieldnames=fieldnames)
-                    writer.writeheader()
-                    for result in results:
-                        writer.writerow(result)
-                
-                logger.info(f"\nProcessed {len(results)} lots successfully!")
+            logger.info("Lots details collection completed!")
             
         except Exception as e:
             logger.error(f"Error creating lots_details.csv: {str(e)}")
+            if 'driver' in locals():
+                driver.quit()
+            raise
+
+    def cleanup(self):
+        """Thread-local kaynakları temizle"""
+        if hasattr(self.thread_local, "driver"):
+            self.thread_local.driver.quit()
+
+    def __del__(self):
+        """Destructor: Kaynakları temizle"""
+        self.cleanup()
+
+    def scrape_all(self):
+        """Main workflow with detailed progress tracking"""
+        try:
+            total_steps = 2
+            current_step = 1
+            
+            logger.info("=== Starting IBidder Scraping Process ===")
+            logger.info(f"Step {current_step}/{total_steps}: Creating products.csv")
+            start_time = time.time()
+            self.create_products_csv()
+            
+            current_step += 1
+            logger.info(f"\nStep {current_step}/{total_steps}: Creating lots_details.csv")
+            self.create_lots_details()
+            
+            end_time = time.time()
+            total_time = end_time - start_time
+            logger.info("\n=== Scraping Process Completed ===")
+            logger.info(f"Total execution time: {total_time:.2f} seconds")
+            
+        except Exception as e:
+            logger.error(f"Critical error in main workflow: {str(e)}")
             raise
 
     def get_lot_details(self, driver, product):
@@ -197,93 +390,6 @@ class IBidderScraper:
             logger.error(f"Error processing lot details: {str(e)}")
             return None
 
-    def create_products_csv(self):
-        """First step: Create products.csv with URLs and titles"""
-        try:
-            with open('data/output/products.csv', 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['title', 'url', 'image_url']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                
-                # URL'leri oku
-                urls = self.get_urls_from_file('data/input/urls.txt')
-                logger.info(f"Number of URLs to read: {len(urls)}")
-                
-                # Auction URL'lerini topla
-                all_auction_urls = []
-                for url in urls:
-                    target_category = self.get_category_from_url(url)
-                    if not target_category:
-                        logger.warning(f"Category code not found: {url}")
-                        continue
-                        
-                    logger.info(f"Processing URL: {url}")
-                    logger.info(f"Target category: {target_category}")
-                    
-                    auction_urls = self.get_auction_urls(url, target_category)
-                    all_auction_urls.extend(auction_urls)
-                
-                logger.info(f"\nTotal auction URLs found: {len(all_auction_urls)}")
-                
-                # Her URL'yi sırayla işle
-                for auction_url in tqdm(all_auction_urls, desc="Processing auctions"):
-                    try:
-                        products = self.get_product_details(auction_url)
-                        if products:
-                            for product in products:
-                                writer.writerow(product)
-                        time.sleep(1)  # Her istek arasında 1 saniye bekle
-                    except Exception as e:
-                        logger.error(f"Error processing auction: {str(e)}")
-                
-                logger.info("products.csv created successfully!")
-                
-        except Exception as e:
-            logger.error(f"Error creating products.csv: {str(e)}")
-            raise
-
-    def get_product_details(self, url):
-        """Get product details using requests"""
-        try:
-            logger.info(f"\nChecking auction: {url}")
-            response = self.session.get(url)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            products = []
-            
-            # Find all product containers
-            lot_divs = soup.find_all('div', class_='lot-single')
-            
-            for lot in lot_divs:
-                product_data = {}
-                
-                # Get product link and image
-                product_link = lot.find('a', class_='click-track', 
-                                      attrs={'data-click-type': 'image'})
-                
-                if product_link:
-                    # Get URL
-                    product_url = product_link.get('href')
-                    if product_url.startswith('/'):
-                        product_url = f"https://www.i-bidder.com{product_url}"
-                    product_data['url'] = product_url
-                    
-                    # Get image and title
-                    product_img = product_link.find('img')
-                    if product_img:
-                        product_data['image_url'] = product_img.get('src', '')
-                        product_data['title'] = product_img.get('alt', '').strip()
-                
-                if product_data:
-                    products.append(product_data)
-            
-            return products
-            
-        except Exception as e:
-            logger.error(f"Error getting product details: {str(e)}")
-            return []
-
     def get_category_from_url(self, url):
         """Extract category code from URL"""
         try:
@@ -304,39 +410,72 @@ class IBidderScraper:
             return []
 
     def get_auction_urls(self, url, target_category):
-        """Ana sayfadaki açık artırma URL'lerini toplar"""
+        """Collects auction URLs from main page"""
         try:
-            logger.info(f"URL kontrol ediliyor: {url}")
-            response = self.session.get(url)
-            response.raise_for_status()
+            logger.info(f"Checking URL: {url}")
             
-            soup = BeautifulSoup(response.text, 'html.parser')
-            auction_summaries = soup.find_all('div', class_='auction-summary-standard')
+            # Get page number
+            current_page = 1
+            if "page=" in url:
+                current_page = int(url.split("page=")[1])
             
             matching_urls = []
             
-            for auction in auction_summaries:
-                # "Coming soon" kontrolü
-                button = auction.find('a', class_='button')
-                if button and 'Coming soon' in button.text.strip():
-                    continue
-                
-                # Auction link kontrolü
-                auction_link = auction.find('a', class_='auction-image-container')
-                if auction_link and auction_link.get('href'):
-                    base_url = auction_link.get('href')
-                    if base_url.startswith('/'):
-                        base_url = f"https://www.i-bidder.com{base_url}"
+            while current_page <= 2:
+                try:
+                    # Check current page
+                    page_url = url.replace(f"page={current_page-1}", f"page={current_page}") if "page=" in url else f"{url}&page={current_page}"
                     
-                    final_url = f"{base_url}/search-filter?mastercategorycode={target_category}"
-                    matching_urls.append(final_url)
+                    logger.info(f"Processing page {current_page}: {page_url}")
+                    response = self.session.get(page_url)
+                    response.raise_for_status()
+                    
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    # Find all <a> tags with class='click-track'
+                    auction_links = soup.find_all('a', class_='click-track')
+                    
+                    # Collect auction URLs from the page
+                    page_urls = []
+                    for link in auction_links:
+                        try:
+                            # Get href attribute
+                            auction_url = link.get('href')
+                            if auction_url:
+                                if not auction_url.startswith('http'):
+                                    auction_url = f"https://www.i-bidder.com{auction_url}"
+                                page_urls.append(auction_url)
+                        except Exception as e:
+                            logger.warning(f"Error processing link: {str(e)}")
+                            continue
+                    
+                    # Remove duplicate URLs
+                    page_urls = list(set(page_urls))
+                    matching_urls.extend(page_urls)
+                    
+                    logger.info(f"Page {current_page}: Found {len(page_urls)} auction URLs")
+                    
+                    # If no URLs found on page, end loop
+                    if len(page_urls) == 0:
+                        logger.warning(f"No URLs found on page {current_page}, stopping process")
+                        break
+                    
+                    current_page += 1
+                    time.sleep(1)  # Rate limiting delay
+                    
+                except Exception as e:
+                    logger.error(f"Error processing page {current_page}: {str(e)}")
+                    break
             
-            logger.info(f"Found {len(matching_urls)} auction URLs")
+            # Remove all duplicate URLs
+            matching_urls = list(set(matching_urls))
+            logger.info(f"Total unique auction URLs found: {len(matching_urls)}")
             return matching_urls
             
         except Exception as e:
-            logger.error(f"Auction URLs alınırken hata: {str(e)}")
-            return []
+            logger.error(f"Error collecting auction URLs: {str(e)}")
+            if not url.startswith('http'):
+                url = f"https://www.i-bidder.com{url}"
+            return [url]
 
 def run_scraper():
     """Ana scraping işlemini başlatan fonksiyon"""

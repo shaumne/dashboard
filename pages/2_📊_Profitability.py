@@ -12,6 +12,8 @@ from src.services.ebay_listing_service import listing_service
 from src.services.woocommerce_service import WooCommerceService
 from src.services.ebay_service import EbayService
 from src.services.ebay_category_finder import EbayCategoryFinder
+import json
+import time
 
 # Global instance
 woo_service = WooCommerceService()
@@ -152,6 +154,7 @@ def is_valid_image_url(url):
     valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
     return any(ext in url.lower() for ext in valid_extensions)
 
+@st.cache_data(ttl=2)  # 2 saniyelik cache
 def load_and_process_data():
     """Load and process data with new pricing strategy"""
     try:
@@ -209,17 +212,17 @@ def load_and_process_data():
         # Filter rows with prices
         df_with_prices = df.dropna(subset=['ebay_price'])
         
-        print("\n=== Final Results ===")
-        print(f"Total items: {len(df)}")
-        print(f"Items with prices: {len(df_with_prices)}")
-        print(f"Profitable items: {df_with_prices['is_profitable'].sum()}")
+        # print("\n=== Final Results ===")
+        # print(f"Total items: {len(df)}")
+        # print(f"Items with prices: {len(df_with_prices)}")
+        # print(f"Profitable items: {df_with_prices['is_profitable'].sum()}")
         
         if len(df_with_prices) > 0:
             print("\nProfitable Items:")
             profitable_items = df_with_prices[df_with_prices['is_profitable']]
-            for _, row in profitable_items.iterrows():
-                print(f"- {row['name']}: Cost=£{row['total_cost']:.2f}, eBay=£{row['ebay_price']:.2f}, Profit=£{row['profit']:.2f}")
-            return profitable_items
+            # for _, row in profitable_items.iterrows():
+            #     # print(f"- {row['name']}: Cost=£{row['total_cost']:.2f}, eBay=£{row['ebay_price']:.2f}, Profit=£{row['profit']:.2f}")
+            # return profitable_items
         else:
             print("No items with valid prices found!")
             return pd.DataFrame()
@@ -289,7 +292,11 @@ def display_item_card(row, index):
                                 for idx, thumb_col in enumerate(thumbnail_cols):
                                     if idx + 1 < len(image_list):
                                         with thumb_col:
+                                            # Display thumbnail
                                             st.image(image_list[idx + 1], width=50)
+                                            # Add link to open full image in new tab
+                                            st.markdown(f'<a href="{image_list[idx + 1]}" target="_blank">View</a>', 
+                                                      unsafe_allow_html=True)
                     except Exception as img_error:
                         st.warning(f"Error loading images: {str(img_error)}")
                         st.image("assets/no-image.png", 
@@ -307,11 +314,13 @@ def display_item_card(row, index):
                 st.write(f"**eBay Price:** £{row['ebay_lowest_price'] if pd.notna(row['ebay_lowest_price']) else 'N/A'}")
                 st.write(f"**Profit:** £{row['profit']:.2f}" if pd.notna(row.get('profit')) else "**Profit:** N/A")
                 
-                # Show URLs
+                # Show URLs with target="_blank"
                 if pd.notna(row.get('url')):
-                    st.write(f"[View Auction]({row['url']})")
+                    st.markdown(f'<a href="{row["url"]}" target="_blank">View Auction</a>', 
+                              unsafe_allow_html=True)
                 if pd.notna(row.get('ebay_url')):
-                    st.write(f"[View on eBay]({row['ebay_url']})")
+                    st.markdown(f'<a href="{row["ebay_url"]}" target="_blank">View on eBay</a>', 
+                              unsafe_allow_html=True)
             
             # Button column
             with col3:
@@ -339,83 +348,83 @@ def display_item_card(row, index):
 def show_product_editor(row, ebay_details=None):
     """Show product editor with pre-filled eBay categories"""
     try:
-        st.subheader("📝 Product Editor")
+        print(f"show_product_editor başladı: {row.get('name', 'Unknown')}")  # Debug log
         
-        with st.form("product_editor"):
-            col1, col2 = st.columns(2)
+        # Form durumunu kontrol et
+        if 'product_editor_submitted' not in st.session_state:
+            st.session_state['product_editor_submitted'] = False
             
-            with col1:
-                title = st.text_input("Title", value=row['name'])
+        if not st.session_state.get('product_editor_submitted', False):
+            with st.form("product_editor", clear_on_submit=False):
+                st.subheader("Ürün Detayları")
                 
-                # Fiyat dönüşümü için güvenli kontrol
-                if pd.notna(row.get('ebay_lowest_price')):
-                    if isinstance(row['ebay_lowest_price'], str):
-                        price = float(row['ebay_lowest_price'].replace('£','').strip())
-                    else:
-                        price = float(row['ebay_lowest_price'])
+                # Temel bilgiler
+                title = st.text_input("Başlık", value=row['name'])
+                regular_price = st.number_input("Fiyat (£)", value=float(row['ebay_lowest_price']) if pd.notna(row.get('ebay_lowest_price')) else 0.0)
+                sku = st.text_input("SKU", value=row.get('sku', ''))
+                stock = st.number_input("Stok", value=1, min_value=1)
+                
+                # Durum ve garanti
+                condition = st.selectbox("Durum", ["New", "Used", "Refurbished"], index=0)
+                warranty = st.selectbox("Garanti", ["No Warranty", "1 Year", "2 Years"], index=0)
+                
+                # Marka
+                brand = st.text_input("Marka", value=ebay_details.get('brand', '') if ebay_details else '')
+                
+                # Açıklama
+                description = st.text_area("Açıklama", value=row.get('description', ''))
+                
+                # Resim galerisi
+                if pd.notna(row.get('images')):
+                    try:
+                        image_list = eval(row['images']) if isinstance(row['images'], str) else row['images']
+                        st.write("Ürün Resimleri:")
+                        image_cols = st.columns(min(4, len(image_list)))
+                        for idx, img_col in enumerate(image_cols):
+                            if idx < len(image_list):
+                                with img_col:
+                                    st.image(image_list[idx], width=100)
+                                    st.markdown(f'<a href="{image_list[idx]}" target="_blank">Tam Boyut</a>', 
+                                              unsafe_allow_html=True)
+                    except Exception as img_error:
+                        print(f"Resim işleme hatası: {str(img_error)}")
+                        st.warning("Resimler işlenirken hata oluştu")
+                
+                # Kategori seçimi
+                if ebay_details and ebay_details.get('woo_categories'):
+                    st.write("eBay Kategorileri:")
+                    selected_categories = st.multiselect(
+                        "Kategoriler",
+                        options=[cat['name'] for cat in ebay_details['woo_categories']],
+                        default=[cat['name'] for cat in ebay_details['woo_categories']],
+                        help="eBay listesinden kategorileri seçin"
+                    )
                 else:
-                    price = 0.0
-                    
-                regular_price = st.number_input("Regular Price", value=price)
-                sku = st.text_input("SKU", value=f"AUC-{row.get('auction_id', '')}")
-                stock = st.number_input("Stock", value=1)
-                
-            with col2:
-                brand = st.text_input("Brand", 
-                    value=ebay_details.get('brand', '') if ebay_details and ebay_details.get('brand') else '')
-                
-                condition = st.selectbox("Condition", 
-                    options=['New', 'Used - Like New', 'Used - Good', 'Used - Fair'])
-                warranty = st.selectbox("Warranty",
-                    options=['No Warranty', '30 Days', '60 Days', '90 Days'])
-            
-            # Ürün açıklaması
-            description = st.text_area("Description", 
-                value=row.get('description', ''), 
-                height=150,
-                help="Product description from auction listing")
-            
-            # Resim galerisi
-            if pd.notna(row.get('images')):
-                try:
-                    image_list = eval(row['images']) if isinstance(row['images'], str) else row['images']
-                    st.write("Product Images:")
-                    image_cols = st.columns(min(4, len(image_list)))
-                    for idx, img_col in enumerate(image_cols):
-                        if idx < len(image_list):
-                            with img_col:
-                                st.image(image_list[idx], width=100)
-                                st.markdown(f'<a href="{image_list[idx]}" target="_blank">View Full Size</a>', 
-                                          unsafe_allow_html=True)
-                except Exception as img_error:
-                    st.warning(f"Error loading images: {str(img_error)}")
-            
-            # Kategori seçimi
-            if ebay_details and ebay_details.get('woo_categories'):
-                st.write("eBay Categories Found:")
-                for cat in ebay_details['woo_categories']:
-                    st.write(f"- {cat['name']}")
-                
-                selected_categories = st.multiselect(
-                    "Select Categories",
-                    options=[cat['name'] for cat in ebay_details['woo_categories']],
-                    default=[cat['name'] for cat in ebay_details['woo_categories']],
-                    help="Select categories from eBay listing"
-                )
-            else:
-                st.warning("⚠️ No eBay categories found. Please select manually.")
-                selected_categories = st.multiselect(
-                    "Categories",
-                    ["Electronics", "Lab Equipment", "Industrial", "Tools", "Other"],
-                    default=["Lab Equipment"]
-                )
+                    st.warning("⚠️ eBay kategorileri bulunamadı. Lütfen manuel seçin.")
+                    selected_categories = st.multiselect(
+                        "Kategoriler",
+                        ["Electronics", "Lab Equipment", "Industrial", "Tools", "Other"],
+                        default=["Lab Equipment"]
+                    )
 
-            if st.form_submit_button("Create Product"):
-                create_product(row, title, regular_price, sku, stock, condition, 
-                             warranty, selected_categories, ebay_details, brand, description)
-                             
+                submitted = st.form_submit_button("Ürün Oluştur")
+                
+                if submitted:
+                    success = create_product(row, title, regular_price, sku, stock, condition, 
+                                          warranty, selected_categories, ebay_details, brand, description)
+                    if success:
+                        st.session_state['product_editor_submitted'] = True
+                        st.success("✅ Ürün başarıyla oluşturuldu!")
+                        
+        else:
+            # Form başarıyla gönderildiyse yeni bir buton göster
+            if st.button("Yeni Ürün Ekle"):
+                st.session_state['product_editor_submitted'] = False
+                st.experimental_rerun()
+                
     except Exception as e:
-        st.error(f"Error showing product editor: {str(e)}")
+        print(f"show_product_editor hatası: {str(e)}")
+        st.error(f"Ürün editörü gösterilirken hata: {str(e)}")
 
 def update_ebay_prices():
     """Update eBay prices using ebay_search.py"""
@@ -443,139 +452,143 @@ def update_ebay_prices():
                     st.error(f"Error updating prices: {str(e)}")
 
 def create_dashboard():
-    """Create Streamlit dashboard with improved layout"""
-    st.set_page_config(layout="wide", page_title="Auction Profitability Analysis")
+    st.title("📊 Profitability Analysis")
     
-    # Add title with emoji
-    st.title("🎯 Auction Profitability Analysis")
+    # Auto refresh control in sidebar
+    with st.sidebar:
+        auto_refresh = st.checkbox("Otomatik Yenileme", value=True)
+        st.caption(f"Son yenileme: {datetime.now().strftime('%H:%M:%S')}")
     
-    # Add eBay price update button
-    update_ebay_prices()
+    # Session state for refresh timing
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = time.time()
     
-    st.markdown("---")
+    # Check if it's time to refresh
+    current_time = time.time()
+    if auto_refresh and (current_time - st.session_state.last_refresh) >= 2:  # 2 saniye
+        st.cache_data.clear()
+        st.session_state.last_refresh = current_time
     
-    # Load data
+    # Load and process data
     df = load_and_process_data()
     
-    if df.empty:
-        st.error("No data available for analysis!")
-        return
-    
-    # Add filters in expandable section
-    with st.expander("📊 Filter Options", expanded=True):
+    if not df.empty:
+        # Add filters in expandable section
+        with st.expander("📊 Filter Options", expanded=True):
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                min_profit = st.number_input("Min Profit (£)", value=0.0, step=10.0)
+            with col2:
+                max_cost = st.number_input("Max Cost (£)", value=1000.0, step=100.0)
+            with col3:
+                price_source = st.multiselect(
+                    "Price Source",
+                    ['ebay_sold', 'ebay_similar', 'google'],
+                    default=['ebay_sold', 'ebay_similar', 'google']
+                )
+            with col4:
+                sort_by = st.selectbox(
+                    "Sort By",
+                    ['profit', 'total_cost', 'ebay_price', 'bidding_ends'],
+                    index=0
+                )
+        
+        # Filter and sort data
+        filtered_df = df[
+            (df['profit'] >= min_profit) &
+            (df['total_cost'] <= max_cost) &
+            (df['price_source'].isin(price_source))
+        ].sort_values(by=sort_by, ascending=False)
+        
+        # Display statistics
+        st.subheader("📈 Statistics")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            min_profit = st.number_input("Min Profit (£)", value=0.0, step=10.0)
+            st.metric("Total Items", len(filtered_df))
         with col2:
-            max_cost = st.number_input("Max Cost (£)", value=1000.0, step=100.0)
+            avg_profit = filtered_df['profit'].mean()
+            st.metric("Average Profit", f"£{avg_profit:.2f}" if pd.notna(avg_profit) else "£0.00")
         with col3:
-            price_source = st.multiselect(
-                "Price Source",
-                ['ebay_sold', 'ebay_similar', 'google'],
-                default=['ebay_sold', 'ebay_similar', 'google']
-            )
+            total_profit = filtered_df['profit'].sum()
+            st.metric("Total Potential Profit", f"£{total_profit:.2f}" if pd.notna(total_profit) else "£0.00")
         with col4:
-            sort_by = st.selectbox(
-                "Sort By",
-                ['profit', 'total_cost', 'ebay_price', 'bidding_ends'],
-                index=0
-            )
+            source_counts = filtered_df['price_source'].value_counts()
+            st.write("Price Sources:", source_counts.to_dict())
+        
+        # Display items with index
+        st.subheader(f"📋 Profitable Items ({len(filtered_df)})")
+        for index, (_, row) in enumerate(filtered_df.iterrows()):
+            display_item_card(row, index)
+    else:
+        st.warning("No profitable items found!")
     
-    # Filter and sort data
-    filtered_df = df[
-        (df['profit'] >= min_profit) &
-        (df['total_cost'] <= max_cost) &
-        (df['price_source'].isin(price_source))
-    ].sort_values(by=sort_by, ascending=False)
-    
-    # Display statistics
-    st.subheader("📈 Statistics")
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Items", len(filtered_df))
-    with col2:
-        avg_profit = filtered_df['profit'].mean()
-        st.metric("Average Profit", f"£{avg_profit:.2f}" if pd.notna(avg_profit) else "£0.00")
-    with col3:
-        total_profit = filtered_df['profit'].sum()
-        st.metric("Total Potential Profit", f"£{total_profit:.2f}" if pd.notna(total_profit) else "£0.00")
-    with col4:
-        source_counts = filtered_df['price_source'].value_counts()
-        st.write("Price Sources:", source_counts.to_dict())
-    
-    # Display items with index
-    st.subheader(f"📋 Profitable Items ({len(filtered_df)})")
-    for index, (_, row) in enumerate(filtered_df.iterrows()):
-        display_item_card(row, index)
+    # Auto refresh if enabled
+    if auto_refresh:
+        time.sleep(2)
+        st.rerun()
 
 def create_product(row, title, regular_price, sku, stock, condition, warranty, selected_categories, ebay_details, brand, description):
     """Create product in WooCommerce"""
     try:
-        st.info("Creating product...")
-        
-        # Kategori listesini oluştur
-        woo_categories = []
-        for category in selected_categories:
-            woo_categories.append({
-                "name": category.strip()
-            })
-        
-        # Ürün verilerini hazırla
-        product_data = {
-            "name": title,
-            "type": "simple",
-            "regular_price": str(regular_price),
-            "sku": sku,
-            "stock_quantity": stock,
-            "manage_stock": True,
-            "categories": woo_categories,
-            "attributes": [
-                {
-                    "name": "Brand",
-                    "visible": True,
-                    "options": [brand] if brand else []
-                },
-                {
-                    "name": "Condition",
-                    "visible": True,
-                    "options": [condition]
-                },
-                {
-                    "name": "Warranty",
-                    "visible": True,
-                    "options": [warranty]
-                }
-            ]
-        }
-        
-        # eBay özelliklerini ekle
-        if ebay_details and ebay_details.get('specifics'):
-            for specific in ebay_details['specifics']:
-                product_data['attributes'].append({
-                    "name": specific['Name'],
-                    "visible": True,
-                    "options": [specific['Value']]
-                })
-        
-        # Ürünü oluştur
-        response = woo_service.create_product(product_data)
-        
-        if response and response.get('id'):
-            st.success(f"✅ Product created successfully! ID: {response['id']}")
+        with st.spinner("Ürün oluşturuluyor..."):
+            print(f"DEBUG: Ürün oluşturma başladı - Başlık: {title}")  # Debug log
             
-            # Ürün URL'sini göster
-            product_url = response.get('permalink')
-            if product_url:
-                st.markdown(f"[View Product]({product_url})")
-        else:
-            st.error("Failed to create product")
+            # Resim listesini hazırla
+            images = []
+            if pd.notna(row.get('images')):
+                try:
+                    images = eval(row['images']) if isinstance(row['images'], str) else row['images']
+                    print(f"DEBUG: İşlenecek resimler: {len(images)} adet")  # Debug log
+                except Exception as img_error:
+                    print(f"DEBUG: Resim işleme hatası: {str(img_error)}")
             
+            # Ürün verilerini hazırla
+            product_data = {
+                "name": title,
+                "type": "simple",
+                "regular_price": str(regular_price),
+                "description": description,
+                "short_description": f"Professional {title}",
+                "sku": sku,
+                "stock_quantity": stock,
+                "manage_stock": True,
+                "categories": [{"name": cat.strip()} for cat in selected_categories],
+                "images": [{"src": img} for img in images if img and is_valid_image_url(img)],
+                "url": row['url'],
+                "attributes": [
+                    {"name": "Brand", "visible": True, "options": [brand] if brand else []},
+                    {"name": "Condition", "visible": True, "options": [condition]},
+                    {"name": "Warranty", "visible": True, "options": [warranty]}
+                ],
+                "status": "publish"  # Önemli: Ürünün durumunu belirt
+            }
+            
+            print(f"DEBUG: WooCommerce'a gönderilecek veri:\n{json.dumps(product_data, indent=2)}")  # Debug log
+            
+            # Ürünü oluştur
+            response = woo_service.create_product(product_data)
+            print(f"DEBUG: WooCommerce yanıtı:\n{json.dumps(response, indent=2)}")  # Debug log
+            
+            if response and response.get('id'):
+                with st.expander("Ürün Detayları", expanded=True):
+                    st.success(f"✅ Ürün başarıyla oluşturuldu! ID: {response['id']}")
+                    product_url = response.get('permalink')
+                    if product_url:
+                        st.markdown(f"[Ürünü Görüntüle]({product_url})")
+                return True
+            else:
+                error_msg = response.get('error', 'Bilinmeyen hata')
+                print(f"DEBUG: Ürün oluşturma hatası: {error_msg}")  # Debug log
+                st.error(f"Ürün oluşturulamadı: {error_msg}")
+                return False
+                
     except Exception as e:
-        st.error(f"Error creating product: {str(e)}")
-        st.error("Full error details:")
+        print(f"DEBUG: Genel hata: {str(e)}")  # Debug log
+        st.error(f"Ürün oluşturma hatası: {str(e)}")
         st.exception(e)
+        return False
 
 if __name__ == "__main__":
     woo_service.start_monitoring()
