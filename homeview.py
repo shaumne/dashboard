@@ -23,8 +23,8 @@ def clean_price(price_str):
 
 try:
     # Load data
-    lots_df = pd.read_csv('.\data\output\lots_details.csv')
-    lots_with_ebay_df = pd.read_csv('.\data\output\lots_details_with_ebay.csv')
+    lots_df = pd.read_csv('./data/output/lots_details.csv')
+    lots_with_ebay_df = pd.read_csv('./data/output/lots_details_with_ebay.csv')
     
     # Clean price data
     lots_df['current_bid'] = lots_df['current_bid'].apply(clean_price)
