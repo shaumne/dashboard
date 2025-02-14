@@ -27,7 +27,11 @@ def load_settings():
         'woocommerce_url': '',
         'woocommerce_consumer_key': '',
         'woocommerce_consumer_secret': '',
-        'woocommerce_webhook_secret': ''
+        'woocommerce_webhook_secret': '',
+        'email_password': '',
+        'smtp_server': 'smtp.gmail.com',
+        'smtp_port': 587,
+        'check_interval': 300
     }
 
 def save_settings(settings):
@@ -80,14 +84,57 @@ def show_settings():
     st.subheader("📧 Notification Settings")
     with st.expander("Notification Preferences", expanded=True):
         settings['notification_email'] = st.text_input(
-            "Email Address", 
-            value=settings.get('notification_email', '')
+            "Gmail Address", 
+            value=settings.get('notification_email', ''),
+            help="Your Gmail account"
         )
-        settings['notification_whatsapp'] = st.text_input(
-            "WhatsApp Number", 
-            value=settings.get('notification_whatsapp', '')
+        settings['email_password'] = st.text_input(
+            "Gmail App Password", 
+            value=settings.get('email_password', ''),
+            type="password",
+            help="Get this from Gmail > Security > 2-Step Verification > App Passwords"
         )
-    
+        
+        # Detailed help message
+        st.markdown("""
+        ℹ️ **How to Get Gmail App Password**
+        1. Enable 2-Step Verification in Gmail
+        2. Go to Google Account > Security > 2-Step Verification > App Passwords ( https://myaccount.google.com/apppasswords)
+        3. Select "Other" and give it a name (e.g., "Price Monitor")
+        4. Copy the 16-digit password and paste it above
+        
+        Note: Regular Gmail password won't work. You must use App Password.
+        """)
+        
+        # Test button
+        if st.button("Test Email"):
+            if not settings['notification_email'] or not settings['email_password']:
+                st.error("❌ Please fill in both email and password fields!")
+            else:
+                try:
+                    import smtplib
+                    from email.mime.text import MIMEText
+                    from email.mime.multipart import MIMEMultipart
+                    
+                    msg = MIMEMultipart()
+                    msg['From'] = settings['notification_email']
+                    msg['To'] = settings['notification_email']
+                    msg['Subject'] = "Test Email from Price Monitor"
+                    
+                    body = "This is a test email. Email notifications are working successfully!"
+                    msg.attach(MIMEText(body, 'plain'))
+                    
+                    server = smtplib.SMTP('smtp.gmail.com', 587)
+                    server.starttls()
+                    server.login(settings['notification_email'], settings['email_password'])
+                    text = msg.as_string()
+                    server.sendmail(settings['notification_email'], settings['notification_email'], text)
+                    server.quit()
+                    
+                    st.success("✅ Test email sent successfully!")
+                except Exception as e:
+                    st.error(f"❌ Email error: {str(e)}")
+                    st.error("Please make sure you've entered the correct Gmail App Password!")
     
     # WooCommerce API Settings
     st.subheader("🛍️ WooCommerce Settings")
